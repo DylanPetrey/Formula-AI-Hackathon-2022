@@ -1,0 +1,198 @@
+---
+title: "Regression R Project"
+author: "Michael Petrey"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+editor_options:
+  chunk_output_type: inline
+---
+
+## Importing the Dataset  
+This data is intended to be used to predict if a transaction is fraudulent. However, I thought it would be interesting if I could use the information to predict the transaction amount. Because this dataset contains transactions made by real customers, the original feature names have been hidden. 
+https://www.kaggle.com/datasets/mlg-ulb/creditcardfraud  
+
+```{r}
+# Import data
+df_full <- read.csv("creditcard.csv")
+```
+
+
+## Data Exploration
+First I need to see what is in my data.
+```{r}
+# See what is in the data set
+str(df_full)
+
+# Check for NULL values 
+sapply(df_full, function(x) sum(is.na(x)==TRUE))
+
+head(df)
+
+summary(df_full)
+
+```
+
+  
+Now I need to decide which features I would need to use. To do so I will have to calculate the correlations to the target value. This will give me a good idea on how the features can be used for the regression algorithms.  
+
+```{r}
+# Load packages
+library('caret')
+library('ggplot2')
+
+
+# Create the correlation matrix
+corrMatrix <- cor(df_full, method = "pearson", use = "pairwise.complete.obs")
+
+# Set correlation to the target feature
+corrMatrix <- subset(corrMatrix, select = 'Amount')
+
+# Remove features with no correlations
+corrMatrix <- na.omit(corrMatrix)
+
+# Sort in descending order
+corrMatrix <- corrMatrix[order(corrMatrix[,1],decreasing=TRUE),]
+
+# Remove M_WEATHER from the correlation matrix
+corrMatrix <- corrMatrix[-1]
+
+
+# Plot the sorted correlations
+corrMatrix <- data.frame(corrMatrix)
+corrNames <- row.names(corrMatrix) 
+ggplot(corrMatrix, aes(x=reorder(corrNames,-corrMatrix), y=corrMatrix)) + 
+  geom_bar(stat = "identity", width = 0.5, position = position_dodge(width = 2)) +
+  scale_y_continuous(expand=c(0,0),limits=c(-1,1)) +
+  ggtitle("Correlation to Price") + xlab('') + ylab('Correlation') +
+  coord_flip()
+
+# Clear up memory that will not be needed in the future
+rm(corrNames)
+rm(corrMatrix)
+
+```
+
+Here I narrow down the dataset's features based on correlations of the data.
+
+```{r}
+df <- subset(df_full, select = c('Amount', 'V2', 'V5', 'V1', 'V3', 'V23', 'V8', 'V6', 'V20', 'V7'))
+
+
+par(mfrow=c(2,5))
+for(i in 1:10){
+  plot(df$Amount~df[,i], col="red")
+}
+
+```
+
+## Linear Regression
+
+```{r}
+library('ROCR')
+
+set.seed(1234)
+i <- sample(1:nrow(df), 0.8*nrow(df), replace=FALSE)
+linear_train <- df[i,]
+linear_test <- df[-i,]
+lm1 <- lm(formula = Amount~., data = linear_train)
+summary(lm1)
+
+linear_pred <- predict(lm1, newdata=linear_test)
+
+linear_corr <- cor(linear_pred, linear_test$Amount)
+linear_mse <- mean((linear_pred - linear_test$Amount)^2)
+linear_rmse <- sqrt(linear_mse)
+
+
+print(paste("correlation: ", linear_corr))
+print(paste("mse: ", linear_mse))
+print(paste("rmse: ", linear_rmse))
+
+rm(i)
+rm(linear_train)
+rm(linear_test)
+```
+
+      
+## Decision Tree
+```{r}
+library(tree)
+set.seed(1234)
+i <- sample(1:nrow(df), 0.8*nrow(df), replace=FALSE)
+tree_train <- df[i,]
+tree_test <- df[-i,]
+
+tree1 <- tree(Amount~., data=tree_train)
+
+summary(tree1)
+
+tree_pred <- predict(tree1, newdata=tree_test)
+tree_corr <- cor(tree_pred, tree_test$Amount)
+tree_mse <- mean((tree_pred-tree_test$Amount)^2)
+tree_rmse <- sqrt(tree_mse)
+
+print(paste("correlation:", tree_corr))
+print(paste("mse:", tree_mse))
+print(paste("rmse:", tree_rmse))
+
+plot(tree1)
+text(tree1, cex=.5,pretty=0)
+```
+
+```{r}
+tree_pruned <- prune.tree(tree1, best=5)
+
+plot(tree_pruned)
+text(tree_pruned, pretty=0)
+
+prune_pred <- predict(tree_pruned, newdata=tree_test)
+prune_corr <- cor(tree_pred, tree_test$Amount)
+prune_mse <- mean((tree_pred-tree_test$Amount)^2)
+prune_rmse <- sqrt(tree_mse)
+
+print(paste("correlation:", prune_corr))
+print(paste("mse:", prune_mse))
+print(paste("rmse:", prune_rmse))
+
+rm(i)
+rm(tree_train)
+rm(tree_test)
+```
+  
+      
+        
+## KNN
+```{r}
+set.seed(1234)
+i <- sample(1:nrow(df), 0.8*nrow(df), replace= FALSE)
+knn_train <- df[i,]
+knn_test <- df[-i,]
+
+# normalize data
+means <- sapply(knn_train, mean)
+stdvs <- sapply(knn_train, sd)
+
+knn_train_scaled <- knn_train[,2:10]
+means <- sapply(knn_train_scaled, mean)
+stdvs <- sapply(knn_train_scaled, sd)
+knn_train_scaled <-scale(knn_train_scaled, center = means, scale = stdvs)
+knn_test_scaled <- scale(knn_test[,2:10], center = means, scale =stdvs)
+
+knn1 <- knnreg(knn_train_scaled, knn_train$Amount, k=1)
+
+knn_pred <- predict(knn1, knn_test_scaled)
+knn_corr <- cor(knn_pred, knn_test$Amount)
+knn_mse <- mean((knn_pred-knn_test$Amount)^2)
+knn_rmse <- sqrt(knn_mse)
+
+print(paste("correlation: ", knn_corr))
+print(paste("mse:", knn_mse))
+print(paste("rmse:", knn_rmse))
+
+```
+  
+    
+## Results  
+Knn is by far the most accurate of all the models. It was the lowest correlation and rmse of all the models I tested. The next best performing model was the tree followed by the linear regression model. It's hard to learn anything from the model as none of the features have names. In hindsight, I wish I had selected a diffferent dataset, but I was having trouble finding one that would work well for regression.
